@@ -20,26 +20,29 @@ from src.constants import (BUTTON_ADD_MEDIA, BUTTON_ATTACHMENT, BUTTON_SEND_MESS
                            CONTACT_NAME, CONVERSE_DETAIL, ICON_UNREAD_MESSAGE, MESSAGE_BOX, MESSAGE_INPUT,
                            MESSAGE_PANEL, MESSAGE_TEXT, MESSAGES, QRCODE, RELOAD_QRCODE)
 from src.schemas.contact import WhatsappContact
-from src.schemas.message import MessageInput
+from src.schemas.message import MessageInput, MessageOutput
 from src.settings import WHATSAPP_WAIT_CHECK_LOGGED
 from src.utils.decorators import retry
 
 
 class WhatsappTalker:
+    __base_url = 'https://web.whatsapp.com/send?1=pt_BR&phone=%s'
     __callback_unread_message: List[Tuple[Callable, List[Any], Dict]] = []
 
     def __init__(self):
         logging.info("Updating Webdriver..")
         path = ChromeDriverManager().download_and_install()[0]
         options = webdriver.ChromeOptions()
-        options.add_argument('user-data-dir=./web')
-        # options.add_argument('--headless')
+        # options.add_argument('user-data-dir=./web')
+        options.add_argument(
+            '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36'  # noqa
+        )
+        options.add_argument('--headless')
+        options.add_experimental_option("useAutomationExtension", False)
+        options.add_argument("--start-maxized")
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-log')
         options.add_argument('--loglevel=3')
-        options.add_argument(
-            '--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_12_6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/65.0.3312.0 Safari/537.36'  # noqa
-        )
 
         self.driver = webdriver.Chrome(path, options=options)
         self.driver.get('https://web.whatsapp.com/')
@@ -58,9 +61,9 @@ class WhatsappTalker:
             return True
 
     @validate_arguments
-    def send_message(self, message: MessageInput) -> Dict:
+    def send_message(self, message: MessageInput) -> MessageOutput:
         if not self.validate_contact(message.contact):
-            return {"success": False, "message": "Contato invalido"}
+            return MessageOutput(**{"status": False, "message": message, "reason": "Invalid contact"})
 
         if message.media:
             self.attach_media(message.media)
@@ -70,7 +73,7 @@ class WhatsappTalker:
 
         self.__get_element(BUTTON_SEND_MESSAGE).click()
 
-        return {"success": True, "message": "Mensagem enviada com sucesso!"}
+        return MessageOutput(**{"status": True, "message": message})
 
     def write_message(self, message: str) -> None:
         msg_input = self.__get_element(MESSAGE_BOX).find_element_by_css_selector(MESSAGE_INPUT)
@@ -86,7 +89,7 @@ class WhatsappTalker:
     @retry(stop_after=30, value_if_error=False, exceptions=(TimeoutException, StaleElementReferenceException))
     @validate_arguments
     def validate_contact(self, contact: WhatsappContact) -> bool:
-        self.driver.get('https://web.whatsapp.com/send?1=pt_BR&phone=%s' % contact.number)
+        self.driver.get(self.__base_url % contact.number)
 
         WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, MESSAGE_PANEL)))
 
@@ -100,11 +103,24 @@ class WhatsappTalker:
             return True
 
     def get_contact_info(self) -> WhatsappContact:
-        self.__get_element(CONTACT_INFO).click()
-        name = self.__get_element(CONTACT_NAME).text
-        number = int("".join([x for x in self.__get_all_elements(CONTACT_DETAILS)[4].text if x.isnumeric()]))
+        @retry(stop_after=10, value_if_error=None, exceptions=(ValueError))
+        def get_number() -> int:
+            return int("".join([x for x in self.__get_all_elements(CONTACT_DETAILS)[4].text if x.isnumeric()]))
 
-        return WhatsappContact(**{"name": name, "number": number})
+        @retry(stop_after=10, value_if_error=None, exceptions=(ValueError))
+        def get_name() -> int:
+            if name := self.__get_element(CONTACT_NAME).text:
+                return name
+
+            raise ValueError("Invalid name")
+
+        self.__get_element(CONTACT_INFO).click()
+
+        return WhatsappContact(**{"name": get_name(), "number": get_number()})
+
+    def get_contact_info_by_number(self, number: int) -> WhatsappContact:
+        self.driver.get(self.__base_url % number)
+        return self.get_contact_info()
 
     def get_qrcode(self) -> str:
         if (

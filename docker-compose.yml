@@ -1,0 +1,41 @@
+version: '3.4'
+
+services:
+  timesheet:
+    container_name: whatsapp-api
+    image: whatsapp-api
+    build: whatsapp-api/
+    ports:
+      - 5000:5000
+    depends_on:
+      - database
+    networks:
+      - database-network
+
+    environment:
+      FLASK_SQLALCHEMY_DATABASE_URI: 'mysql+mysqlconnector://root:admin@database:3306/whatsapp-api'
+
+  database:
+    container_name: database
+    image: mysql
+    restart: always
+    volumes:
+      - ./Database:/docker-entrypoint-initdb.d/:ro
+
+    environment:
+      MYSQL_ROOT_PASSWORD: admin
+    ports:
+      - "3306:3306"
+    networks:
+      - database-network
+
+  adminer:
+    image: adminer
+    ports:
+      - 8080:8080
+    networks:
+      - database-network
+
+networks: 
+  database-network:
+    driver: bridge

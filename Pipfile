@@ -9,6 +9,7 @@ flake8 = "*"
 black = "==20.8b1"
 
 [packages]
+pytz = "*"
 ujson = "*"
 pillow = "*"
 uvloop = "*"
@@ -20,8 +21,10 @@ requests = "*"
 selenium = "*"
 tenacity = "*"
 httptools = "*"
+sqlalchemy = "*"
 python-decouple = "*"
 webdrivermanager = "*"
+mysql-connector-python = "*"
 
 [requires]
 python_version = "3.8"
