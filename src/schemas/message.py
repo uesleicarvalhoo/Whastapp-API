@@ -13,5 +13,5 @@ class MessageInput(BaseModel):
 
 class MessageOutput(BaseModel):
     status: bool
-    contact: WhatsappContact
+    reason: Optional[str]
     message: MessageInput

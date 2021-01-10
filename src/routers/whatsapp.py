@@ -3,7 +3,9 @@ from fastapi.responses import FileResponse
 from starlette.exceptions import HTTPException
 from starlette.status import HTTP_400_BAD_REQUEST
 
-from src.schemas.message import MessageInput
+from src.database.models import Message
+from src.schemas.contact import WhatsappContact
+from src.schemas.message import MessageInput, MessageOutput
 from src.talkers import whatsapp_talker
 
 router = APIRouter()
@@ -17,6 +19,16 @@ async def qrcode():
     return FileResponse(whatsapp_talker.get_qrcode(), media_type="image/png")
 
 
-@router.post("/message")
+@router.post("/message", response_model=MessageOutput)
 async def message(payload: MessageInput):
-    return whatsapp_talker.send_message(payload)
+    msg = whatsapp_talker.send_message(payload)
+
+    if msg.status:
+        Message.create(1, msg.message)
+
+    return msg
+
+
+@router.get("/contact", response_model=WhatsappContact)
+async def contact():
+    return whatsapp_talker.get_contact_info()

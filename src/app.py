@@ -8,7 +8,7 @@ from starlette.responses import RedirectResponse, UJSONResponse
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY, HTTP_500_INTERNAL_SERVER_ERROR
 
 from src import __version__
-from src.routers import whatsapp
+from src.routers import conversation, whatsapp
 from src.settings import BASE_PATH, DEBUG, HOST, PORT, WORKERS
 from src.talkers import whatsapp_talker
 
@@ -22,6 +22,7 @@ app = FastAPI(
 )
 
 app.include_router(whatsapp.router)
+app.include_router(conversation.router)
 
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s: %(message)s", datefmt="%d-%m-%Y %H:%M:%S")
