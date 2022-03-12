@@ -23,7 +23,7 @@ async def qrcode():
 async def message(payload: MessageInput):
     msg = whatsapp_talker.send_message(payload)
 
-    if msg.status:
+    if msg.success:
         Message.create(1, msg.message)
 
     return msg

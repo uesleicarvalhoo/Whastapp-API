@@ -12,6 +12,6 @@ class MessageInput(BaseModel):
 
 
 class MessageOutput(BaseModel):
-    status: bool
+    success: bool
     reason: Optional[str]
     message: MessageInput

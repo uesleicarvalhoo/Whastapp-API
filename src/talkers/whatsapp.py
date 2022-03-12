@@ -8,7 +8,8 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 from PIL import Image, ImageOps
 from pydantic import validate_arguments
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import (ElementClickInterceptedException, NoSuchElementException,
+                                        StaleElementReferenceException, TimeoutException)
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -16,9 +17,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from webdrivermanager import ChromeDriverManager
 
-from src.constants import (BUTTON_ADD_MEDIA, BUTTON_ATTACHMENT, BUTTON_SEND_MESSAGE, CONTACT_DETAILS, CONTACT_INFO,
-                           CONTACT_NAME, CONVERSE_DETAIL, ICON_UNREAD_MESSAGE, MESSAGE_BOX, MESSAGE_INPUT,
-                           MESSAGE_PANEL, MESSAGE_TEXT, MESSAGES, QRCODE, RELOAD_QRCODE)
+from src.constants import (BUTTON_ADD_MEDIA, BUTTON_ATTACHMENT, BUTTON_SEND_MESSAGE, CONTACT_BUTTON_CLOSE,
+                           CONTACT_DETAILS, CONTACT_INFO, CONTACT_NAME, CONVERSE_DETAIL, ICON_UNREAD_MESSAGE,
+                           MESSAGE_BOX, MESSAGE_INPUT, MESSAGE_PANEL, MESSAGE_TEXT, MESSAGES, QRCODE, RELOAD_QRCODE)
 from src.schemas.contact import WhatsappContact
 from src.schemas.message import MessageInput, MessageOutput
 from src.settings import WHATSAPP_WAIT_CHECK_LOGGED
@@ -31,7 +32,10 @@ class WhatsappTalker:
 
     def __init__(self):
         logging.info("Updating Webdriver..")
-        path = ChromeDriverManager().download_and_install()[0]
+        self.__driver_path = ChromeDriverManager().download_and_install()[0]
+        self.__start_driver()
+
+    def __start_driver(self) -> None:
         options = webdriver.ChromeOptions()
         # options.add_argument('user-data-dir=./web')
         options.add_argument(
@@ -44,12 +48,13 @@ class WhatsappTalker:
         options.add_argument('--disable-log')
         options.add_argument('--loglevel=3')
 
-        self.driver = webdriver.Chrome(path, options=options)
+        self.driver = webdriver.Chrome(self.__driver_path, options=options)
         self.driver.get('https://web.whatsapp.com/')
 
     @property
     @retry(stop_after=WHATSAPP_WAIT_CHECK_LOGGED, value_if_error=False, exceptions=(TimeoutException))
     def is_logged(self) -> bool:
+        self.driver.save_screenshot("loggin.png")
         try:
             self.__get_element(MESSAGE_PANEL, 1)
 
@@ -63,7 +68,7 @@ class WhatsappTalker:
     @validate_arguments
     def send_message(self, message: MessageInput) -> MessageOutput:
         if not self.validate_contact(message.contact):
-            return MessageOutput(**{"status": False, "message": message, "reason": "Invalid contact"})
+            return MessageOutput(**{"success": False, "message": message, "reason": "Invalid contact"})
 
         if message.media:
             self.attach_media(message.media)
@@ -73,7 +78,7 @@ class WhatsappTalker:
 
         self.__get_element(BUTTON_SEND_MESSAGE).click()
 
-        return MessageOutput(**{"status": True, "message": message})
+        return MessageOutput(**{"success": True, "message": message})
 
     def write_message(self, message: str) -> None:
         msg_input = self.__get_element(MESSAGE_BOX).find_element_by_css_selector(MESSAGE_INPUT)
@@ -114,7 +119,9 @@ class WhatsappTalker:
 
             raise ValueError("Invalid name")
 
-        self.__get_element(CONTACT_INFO).click()
+        with suppress(ElementClickInterceptedException):
+            self.__get_element(CONTACT_INFO).click()
+        self.__get_element(CONTACT_BUTTON_CLOSE).click()
 
         return WhatsappContact(**{"name": get_name(), "number": get_number()})
 
@@ -141,6 +148,7 @@ class WhatsappTalker:
 
         return img
 
+    @retry(stop_after=5, value_if_error=None, exceptions=(ValueError))
     def get_last_message(self) -> Union[str, None]:
         last_message = None
         for msg in self.driver.find_elements_by_css_selector(MESSAGES):
@@ -148,13 +156,16 @@ class WhatsappTalker:
                 if text := msg.find_element_by_css_selector(MESSAGE_TEXT).text:
                     last_message = text
 
+        if not last_message:
+            raise ValueError("No message found!")
+
         return last_message
 
     def check_unread_message(self) -> Union[str, None]:
         try:
             self.__get_element(ICON_UNREAD_MESSAGE).click()
 
-        except (NoSuchElementException, StaleElementReferenceException):
+        except (NoSuchElementException, StaleElementReferenceException, TimeoutException):
             return None
 
         else:
@@ -164,7 +175,7 @@ class WhatsappTalker:
             if "grupo" in converse_detail or "group" in converse_detail:
                 return None
 
-            return {"message": self.get_last_message(), "contact": self.get_contact_info()}
+            return MessageInput(**{"text": self.get_last_message(), "contact": self.get_contact_info()})
 
     def refresh(self) -> None:
         self.driver.refresh()
@@ -183,20 +194,24 @@ class WhatsappTalker:
 
     def loop_to_check_unread_messages(self) -> None:
         while True:
-            try:
-                if not self.is_logged:
-                    logging.error("Check connection!")
-                    self.refresh()
-                    continue
-
-                if msg := self.check_unread_message():
-                    for fn, args, kwargs in self.__callback_unread_message:
-                        fn(msg, *args, **kwargs)
-                    self.refresh()
-
-            except Exception as e:
-                logging.error("Error while check for unread messages, description: %s" % e)
+            if not self.is_logged:
+                logging.error("Check connection!")
                 self.refresh()
+                continue
+
+            if msg := self.check_unread_message():
+                for fn, args, kwargs in self.__callback_unread_message:
+                    fn(msg, *args, **kwargs)
+                self.refresh()
+
+            # except MaxRetryError:
+            #     logging.error("Restarting webdriver!")
+            #     self.call_on_driver_error()
+            #     self.__start_driver()
+
+            # except Exception as e:
+            #     logging.error("Error while check for unread messages, description: %s" % e)
+            #     self.refresh()
 
     def __get_element(self, css_selector: str, timeout: int = 10):
         return WebDriverWait(self.driver, timeout).until(
@@ -207,3 +222,6 @@ class WhatsappTalker:
         return WebDriverWait(self.driver, timeout).until(
             EC.presence_of_all_elements_located((By.CSS_SELECTOR, css_selector))
         )
+
+    def call_on_driver_error(self):
+        pass
